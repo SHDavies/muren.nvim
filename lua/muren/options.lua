@@ -10,6 +10,8 @@ M.default = {
   preview = true,
   cwd = false,
   files = '**/*',
+  -- behavior
+  write_on_replace = true,
   -- keymaps
   keys = {
     close = 'q',

@@ -153,11 +153,23 @@ M.do_replace_with_patterns = function(patterns, replacements, opts)
   else
     replace_opts.range = '%'
   end
+  local affected_bufs
   if opts.two_step then
-    return multi_replace_non_recursive(patterns, replacements, replace_opts)
+    affected_bufs = multi_replace_non_recursive(patterns, replacements, replace_opts)
   else
-    return multi_replace_recursive(patterns, replacements, replace_opts)
+    affected_bufs = multi_replace_recursive(patterns, replacements, replace_opts)
   end
+  -- Save affected buffers if write_on_replace is enabled
+  if opts.write_on_replace then
+    for buf, _ in pairs(affected_bufs) do
+      if vim.api.nvim_buf_is_valid(buf) and vim.api.nvim_buf_get_option(buf, 'modified') then
+        vim.api.nvim_buf_call(buf, function()
+          vim.cmd('silent! update')
+        end)
+      end
+    end
+  end
+  return affected_bufs
 end
 
 local within_range = function(loc_item, range)
