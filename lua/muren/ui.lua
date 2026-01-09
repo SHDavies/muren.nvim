@@ -434,6 +434,10 @@ M.open = function(opts)
     vim.api.nvim_buf_set_lines(bufs.patterns, 0, -1, true, opts.patterns)
   elseif not opts.fresh then
     vim.api.nvim_buf_set_lines(bufs.patterns, 0, -1, true, last_lines.patterns or {})
+  end
+  if opts.replacements then
+    vim.api.nvim_buf_set_lines(bufs.replacements, 0, -1, true, opts.replacements)
+  elseif not opts.fresh then
     vim.api.nvim_buf_set_lines(bufs.replacements, 0, -1, true, last_lines.replacements or {})
   end
   populate_options_buf()
