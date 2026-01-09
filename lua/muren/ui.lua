@@ -216,6 +216,7 @@ local update_preview = function()
       two_step = options.values.two_step,
       all_on_line = options.values.all_on_line,
       range = nil,
+      notify = false,
     }
   )
   if options.values.cwd then
@@ -391,6 +392,8 @@ local do_replace = function()
     options.values
   )
   last_undoed_bufs = nil
+  -- Close UI after successful replacement
+  M.close()
 end
 
 local do_undo = function()

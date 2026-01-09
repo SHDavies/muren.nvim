@@ -34,16 +34,35 @@ local cmd_silent = function(src)
   pcall(nvim_exec2, src, {output = true})
 end
 
--- Execute substitute command and return the number of replacements
-local function cmd_substitute(src)
-  local ok, result = pcall(nvim_exec2, src, {output = true})
-  if not ok or not result then
-    return 0
+-- Count occurrences of pattern in current buffer
+local function count_matches(pattern, range)
+  local lines
+  if range and range ~= '%' then
+    local start_line, end_line = range:match('(%d+),(%d+)')
+    start_line = tonumber(start_line) - 1
+    end_line = tonumber(end_line)
+    lines = vim.api.nvim_buf_get_lines(0, start_line, end_line, false)
+  else
+    lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
   end
-  local output = type(result) == 'string' and result or (result.output or '')
-  -- Parse "N substitutions on M lines" or "N substitution on M line"
-  local count = output:match('(%d+) substitution')
-  return tonumber(count) or 0
+  local count = 0
+  -- Escape lua pattern special chars but keep it simple for literal matching
+  local lua_pattern = vim.pesc(pattern)
+  for _, line in ipairs(lines) do
+    local start_pos = 1
+    while true do
+      local match_start = line:find(lua_pattern, start_pos, true)
+      if not match_start then break end
+      count = count + 1
+      start_pos = match_start + 1
+    end
+  end
+  return count
+end
+
+-- Execute substitute command
+local function cmd_substitute(src)
+  pcall(nvim_exec2, src, {output = true})
 end
 
 local get_grep_matches = function(pattern, opts)
@@ -79,13 +98,17 @@ local function search_replace(pattern, replacement, opts)
       local _, count = search_replace(pattern, replacement, {
         buf = buf,
         replace_opt_chars = opts.replace_opt_chars,
+        range = opts.range,
       })
       total_count = total_count + count
     end
   else
     affected_bufs = {[opts.buf] = true}
     vim.api.nvim_buf_call(opts.buf, function()
-      total_count = cmd_substitute(string.format(
+      -- Count matches before substitution
+      total_count = count_matches(pattern, opts.range)
+      -- Perform substitution
+      cmd_substitute(string.format(
         '%ss/%s/%s/%s',
         opts.range or '%',
         pattern,
@@ -177,15 +200,17 @@ M.do_replace_with_patterns = function(patterns, replacements, opts)
       end
     end
   end
-  -- Notify with results
-  local file_count = vim.tbl_count(affected_bufs)
-  if total_count > 0 then
-    local file_word = file_count == 1 and 'file' or 'files'
-    local occurrence_word = total_count == 1 and 'occurrence' or 'occurrences'
-    vim.notify(
-      string.format('Replaced %d %s across %d %s', total_count, occurrence_word, file_count, file_word),
-      vim.log.levels.INFO
-    )
+  -- Notify with results (skip if notify is explicitly false, e.g., during preview)
+  if opts.notify ~= false then
+    local file_count = vim.tbl_count(affected_bufs)
+    if total_count > 0 then
+      local file_word = file_count == 1 and 'file' or 'files'
+      local occurrence_word = total_count == 1 and 'occurrence' or 'occurrences'
+      vim.notify(
+        string.format('Replaced %d %s across %d %s', total_count, occurrence_word, file_count, file_word),
+        vim.log.levels.INFO
+      )
+    end
   end
   return affected_bufs
 end
