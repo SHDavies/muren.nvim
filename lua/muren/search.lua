@@ -34,6 +34,18 @@ local cmd_silent = function(src)
   pcall(nvim_exec2, src, {output = true})
 end
 
+-- Execute substitute command and return the number of replacements
+local function cmd_substitute(src)
+  local ok, result = pcall(nvim_exec2, src, {output = true})
+  if not ok or not result then
+    return 0
+  end
+  local output = type(result) == 'string' and result or (result.output or '')
+  -- Parse "N substitutions on M lines" or "N substitution on M line"
+  local count = output:match('(%d+) substitution')
+  return tonumber(count) or 0
+end
+
 local get_grep_matches = function(pattern, opts)
   local current_cwd = vim.fn.getcwd()
   vim.cmd.cd(opts.dir)
@@ -60,18 +72,20 @@ end
 
 local function search_replace(pattern, replacement, opts)
   local affected_bufs
+  local total_count = 0
   if opts.cwd then
     affected_bufs = get_affected_bufs(pattern, opts)
     for buf, _ in pairs(affected_bufs) do
-      search_replace(pattern, replacement, {
+      local _, count = search_replace(pattern, replacement, {
         buf = buf,
         replace_opt_chars = opts.replace_opt_chars,
       })
+      total_count = total_count + count
     end
   else
     affected_bufs = {[opts.buf] = true}
     vim.api.nvim_buf_call(opts.buf, function()
-      cmd_silent(string.format(
+      total_count = cmd_substitute(string.format(
         '%ss/%s/%s/%s',
         opts.range or '%',
         pattern,
@@ -81,44 +95,38 @@ local function search_replace(pattern, replacement, opts)
     end)
   end
   vim.opt.hlsearch = false
-  return affected_bufs
+  return affected_bufs, total_count
 end
 
 local multi_replace_recursive = function(patterns, replacements, opts)
   local affected_bufs = {}
+  local total_count = 0
   for i, pattern in ipairs(patterns) do
     local replacement = replacements[i] or ''
-    affected_bufs = vim.tbl_extend('keep', affected_bufs, search_replace(
-      pattern,
-      replacement,
-      opts
-    ))
+    local bufs, count = search_replace(pattern, replacement, opts)
+    affected_bufs = vim.tbl_extend('keep', affected_bufs, bufs)
+    total_count = total_count + count
   end
-  return affected_bufs
+  return affected_bufs, total_count
 end
 
 local multi_replace_non_recursive = function(patterns, replacements, opts)
   local affected_bufs = {}
+  local total_count = 0
   local replacement_per_placeholder = {}
   for i, pattern in ipairs(patterns) do
     local placeholder = string.format('___MUREN___%d___', i)
     local replacement = replacements[i] or ''
     replacement_per_placeholder[placeholder] = replacement
-    affected_bufs = vim.tbl_extend('keep', affected_bufs, search_replace(
-      pattern,
-      placeholder,
-      opts
-    ))
+    local bufs, count = search_replace(pattern, placeholder, opts)
+    affected_bufs = vim.tbl_extend('keep', affected_bufs, bufs)
+    total_count = total_count + count
   end
   -- TODO if we would have eg 'c' replace_opt_chars I guess we don't want it here?
   for placeholder, replacement in pairs(replacement_per_placeholder) do
-    search_replace(
-      placeholder,
-      replacement,
-      opts
-    )
+    search_replace(placeholder, replacement, opts)
   end
-  return affected_bufs
+  return affected_bufs, total_count
 end
 
 M.find_all_line_matches = function(pattern, opts)
@@ -153,11 +161,11 @@ M.do_replace_with_patterns = function(patterns, replacements, opts)
   else
     replace_opts.range = '%'
   end
-  local affected_bufs
+  local affected_bufs, total_count
   if opts.two_step then
-    affected_bufs = multi_replace_non_recursive(patterns, replacements, replace_opts)
+    affected_bufs, total_count = multi_replace_non_recursive(patterns, replacements, replace_opts)
   else
-    affected_bufs = multi_replace_recursive(patterns, replacements, replace_opts)
+    affected_bufs, total_count = multi_replace_recursive(patterns, replacements, replace_opts)
   end
   -- Save affected buffers if write_on_replace is enabled
   if opts.write_on_replace then
@@ -168,6 +176,16 @@ M.do_replace_with_patterns = function(patterns, replacements, opts)
         end)
       end
     end
+  end
+  -- Notify with results
+  local file_count = vim.tbl_count(affected_bufs)
+  if total_count > 0 then
+    local file_word = file_count == 1 and 'file' or 'files'
+    local occurrence_word = total_count == 1 and 'occurrence' or 'occurrences'
+    vim.notify(
+      string.format('Replaced %d %s across %d %s', total_count, occurrence_word, file_count, file_word),
+      vim.log.levels.INFO
+    )
   end
   return affected_bufs
 end
